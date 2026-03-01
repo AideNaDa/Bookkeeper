@@ -1,3 +1,3 @@
 # Bookkeeper
 
-This is Bookkeeper Assistant
+This is Bookkeeper Assistant.
