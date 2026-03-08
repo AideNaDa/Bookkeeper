@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, desc
 from db.models import User, Operation
-from typing import Sequence
+from sqlalchemy.exc import SQLAlchemyError
+from core.states import States
 
 
 class OperationService:
@@ -13,8 +14,7 @@ class OperationService:
         if not user:
             user = User(user_id=user_id)
             session.add(user)
-            session.commit()
-            session.refresh(user)
+            session.flush()
 
         return user
 
@@ -39,41 +39,70 @@ class OperationService:
         )
         result = session.execute(stmt).scalar()
 
-        return result or 0
+        return (result or 0) / 100
 
     @staticmethod
-    def get_budget_by_key(session: Session, user_id: int, key: str) -> int:
+    def get_budget_by_key(session: Session, user_id: int, key: str) -> float:
         user = OperationService.get_or_create_user(session, user_id)
+        value = getattr(user, f"budget_{key}", 0)
+        return value / 100
+
+    @staticmethod
+    def get_all_balance_info(session: Session, user_id: int) -> str:
+        user = OperationService.get_or_create_user(session, user_id)
+        balance = OperationService.get_balance(session, user_id)
 
         budgets = {
-            "needs": user.budget_needs,
-            "dopamine": user.budget_dopamine,
-            "save": user.budget_save,
+            "Needs": user.budget_needs / 100,
+            "Dopamine": user.budget_dopamine / 100,
+            "Save": user.budget_save / 100,
+            "Indefinite": user.budget_indefinite / 100,
         }
 
-        return budgets.get(key, 0)
+        lines = [f"{k:<13}{v:>10.2f} " for k, v in budgets.items()]
+
+        text = (
+            "<pre>"
+            f"Total balance{balance:>10.2f} \n"
+            "-----------------------\n" + "\n".join(lines) + "</pre>\n⠀"
+        )
+
+        return text
 
     @staticmethod
-    def get_operations(
-        session: Session, user_id: int, limit: int = 20
-    ) -> Sequence[Operation]:
+    def get_operations(session: Session, user_id: int, limit: int = 15) -> str:
         stmt = (
             select(Operation)
             .where(Operation.user_id == user_id)
-            .order_by(Operation.timestamp)
+            .order_by(desc(Operation.timestamp))
             .limit(limit)
         )
 
-        return session.execute(stmt).scalars().all()
+        result = session.execute(stmt).scalars().all()
+
+        if not result:
+            return "<i>No transactions yet</i>"
+
+        lines = []
+        count = 1
+        for row in result:
+            amount = row.amount / 100
+            sign = "🟩+" if amount > 0 else "🟥-"
+
+            lines.append(
+                f"<pre>- - - - - - - - - - {count} - - - - - - - - - -\n{sign}${abs(amount)}\n{row.category}\n({row.description})\n{row.timestamp.strftime("%Y.%m.%d %H:%M:%S")}\n</pre>"
+            )
+            count += 1
+        count = 1
+        lines.reverse()
+        return "\n".join(lines) + "\n⠀"
 
     @staticmethod
     def get_top_expense_description(
-        session: Session, user_id: int, is_expense: bool, limit: int = 5
+        session: Session, user_id: int, is_income: bool = False, limit: int = 5
     ) -> list[str]:
 
-        condition = (
-            Operation.amount > 0 if is_expense else Operation.amount < 0
-        )
+        condition = Operation.amount > 0 if is_income else Operation.amount < 0
 
         stmt = (
             select(
@@ -101,35 +130,35 @@ class OperationService:
         )
 
     @staticmethod
-    def set_state(session: Session, user_id: int, state: str = "idle"):
+    def set_state(
+        session: Session, user_id: int, state: str = States.IDLE.name
+    ):
         user = OperationService.get_or_create_user(session, user_id)
         user.state = state
 
     @staticmethod
-    def set_temp_amount(session: Session, user_id: int, amount: float):
+    def set_temp_amount(session: Session, user_id: int, amount: float = 0):
         user = OperationService.get_or_create_user(session, user_id)
         user.temp_amount = int(amount * 100)
 
     @staticmethod
-    def set_temp_category(session: Session, user_id: int, category: str):
+    def set_temp_category(session: Session, user_id: int, category: str = ""):
         user = OperationService.get_or_create_user(session, user_id)
         user.temp_category = category
 
     @staticmethod
-    def set_temp_description(session: Session, user_id: int, description: str):
+    def set_temp_description(
+        session: Session, user_id: int, description: str = ""
+    ):
         user = OperationService.get_or_create_user(session, user_id)
         user.temp_description = description
 
-
-from db.database import SessionLocal
-
-session = SessionLocal()
-
-telegram_id = 12345
-
-OperationService.add_operation(session, telegram_id)
-OperationService.add_operation(session, telegram_id)
-
-balance = OperationService.get_balance(session, telegram_id)
-
-print("Balance:", balance)
+    @staticmethod
+    def save(session: Session, user: User | None = None):
+        try:
+            if user:
+                session.add(user)
+            session.commit()
+        except SQLAlchemyError:
+            session.rollback()
+            raise

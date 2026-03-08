@@ -10,7 +10,7 @@ class User(Base):
     base_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
 
-    state: Mapped[str] = mapped_column(String, default="idle")
+    state: Mapped[str] = mapped_column(String, default="IDLE")
 
     temp_amount: Mapped[int] = mapped_column(BigInteger, default=0)
     temp_category: Mapped[str] = mapped_column(String(50), default="")
@@ -19,6 +19,7 @@ class User(Base):
     budget_needs: Mapped[int] = mapped_column(BigInteger, default=0)
     budget_dopamine: Mapped[int] = mapped_column(BigInteger, default=0)
     budget_save: Mapped[int] = mapped_column(BigInteger, default=0)
+    budget_indefinite: Mapped[int] = mapped_column(BigInteger, default=0)
 
     operations: Mapped[list["Operation"]] = relationship(
         "Operation", back_populates="user", cascade="all, delete-orphan"
